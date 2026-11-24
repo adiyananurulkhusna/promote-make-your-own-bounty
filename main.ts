@@ -1,103 +1,56 @@
-// Entry program for the post-x-promote-make-your-own-bounty-01 bounty
-// (Node 22, standard library only).
+// Handoff for the promote-make-your-own-bounty entry: the X post itself is the
+// entry, and this program only carries the post's address (POST.json) into the
+// output directory where the grader reads it.
 //
-// The entry is the X post itself: a quote of make.fun's make-your-own-bounty
-// post, carrying a poster that asks readers what bounty THEY would post with
-// $250 in USDC. The score is replies + reposts + quotes, so the post is a
-// question, not a punchline.
-//
-// This program has exactly one job — carry POST.json, the posted entry's
-// address, from the repository into the output directory where the gate can
-// read it.
-//
-// POST.json starts as a placeholder. After the post is published on X, the
-// real post address replaces the placeholder and this program is run again;
-// the gate then fetches the post itself. Nothing this program prints is
-// judged.
+// The address is checked with a pattern, not parsed: a post address is
+// https://x.com/<handle>/status/<digits> (twitter.com works too). Anything
+// else means the post has not been published yet, or POST.json still holds
+// the placeholder.
 //
 // Run it the way the grader does:
 //   mkdir -p out && MAKEFUN_BOT_DIR=. MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import * as fs from "node:fs";
+import * as path from "node:path";
+
+const POST_PATTERN =
+  /^https:\/\/(www\.)?(x\.com|twitter\.com)\/[A-Za-z0-9_]+\/status\/[0-9]+$/;
+
+function die(message: string): never {
+  console.error(`post handoff: ${message}`);
+  process.exit(1);
+}
 
 const botDir = process.env.MAKEFUN_BOT_DIR ?? "/bot";
 const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
 
-const POST_FILE = "POST.json";
-
-// A post address is https://x.com/<handle>/status/<digits> (twitter.com
-// works too). Anything else is a placeholder that has not been filled in yet.
-// Links copied out of the X app often carry tracking queries (?a=...&s=19)
-// and fragments; those are stripped, so the canonical address is what the
-// gate fetches — the same post, without the tracking tail.
-function canonicalPostUrl(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return null;
-  }
-  const hostOk =
-    parsed.hostname === "x.com" ||
-    parsed.hostname === "twitter.com" ||
-    parsed.hostname.endsWith(".x.com") ||
-    parsed.hostname.endsWith(".twitter.com");
-  if (!hostOk || parsed.protocol !== "https:") return null;
-  const parts = parsed.pathname.split("/").filter(Boolean);
-  if (parts.length !== 3 || parts[1] !== "status") return null;
-  if (parts[0].length === 0 || !/^\d+$/.test(parts[2])) return null;
-  parsed.search = "";
-  parsed.hash = "";
-  return parsed.toString();
+const postFile = path.join(botDir, "POST.json");
+if (!fs.existsSync(postFile)) {
+  die(`no POST.json found in ${botDir}`);
 }
 
-function loadPostUrl(): string {
-  const source = join(botDir, POST_FILE);
-  if (!existsSync(source)) {
-    console.error(`no ${POST_FILE} found in ${botDir}; cannot hand off a post`);
-    process.exit(1);
-  }
-  let raw: string;
-  try {
-    raw = readFileSync(source, "utf8");
-  } catch (err) {
-    console.error(`could not read ${source}: ${(err as Error).message}`);
-    process.exit(1);
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    console.error(`${POST_FILE} is not valid JSON: ${(err as Error).message}`);
-    process.exit(1);
-  }
-  const url = (parsed as { url?: unknown }).url;
-  const canonical = canonicalPostUrl(url);
-  if (canonical === null) {
-    console.error(
-      `${POST_FILE} has no posted address yet (expected ` +
-        `https://x.com/<handle>/status/<id>); post on X first, ` +
-        `then replace the placeholder and run again.`,
-    );
-    process.exit(1);
-  }
-  return canonical;
+let doc: unknown;
+try {
+  doc = JSON.parse(fs.readFileSync(postFile, "utf8"));
+} catch (err) {
+  die(`POST.json is not valid JSON: ${(err as Error).message}`);
 }
 
-function main(): void {
-  const url = loadPostUrl();
-  mkdirSync(outDir, { recursive: true });
-  const target = join(outDir, POST_FILE);
-  try {
-    writeFileSync(target, JSON.stringify({ url }) + "\n");
-  } catch (err) {
-    console.error(`could not write ${target}: ${(err as Error).message}`);
-    process.exit(1);
-  }
-  const postId = url.split("/").filter(Boolean).pop();
-  console.log(`handing off post ${postId}: ${url}`);
+const address = (doc as { url?: unknown }).url;
+if (typeof address !== "string" || !POST_PATTERN.test(address)) {
+  die(
+    "POST.json has no posted X address yet — post on X first, then put its address in POST.json and run again",
+  );
 }
 
-main();
+const canonical = address
+  .replace(/^https:\/\/www\./, "https://")
+  .split(/[?#]/)[0];
+
+fs.mkdirSync(outDir, { recursive: true });
+fs.writeFileSync(
+  path.join(outDir, "POST.json"),
+  JSON.stringify({ url: canonical }) + "\n",
+);
+
+console.log(`post handoff ok: ${canonical}`);
