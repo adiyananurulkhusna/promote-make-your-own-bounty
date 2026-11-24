@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const POST_PATTERN =
-  /^https:\/\/(www\.)?(x\.com|twitter\.com)\/[A-Za-z0-9_]+\/status\/[0-9]+$/;
+  /^https:\/\/(www\.)?(x\.com|twitter\.com)\/[A-Za-z0-9_]+\/status\/[0-9]+\/?([?#].*)?$/;
 
 function die(message: string): never {
   console.error(`post handoff: ${message}`);
@@ -45,7 +45,8 @@ if (typeof address !== "string" || !POST_PATTERN.test(address)) {
 
 const canonical = address
   .replace(/^https:\/\/www\./, "https://")
-  .split(/[?#]/)[0];
+  .split(/[?#]/)[0]
+  .replace(/\/+$/, "");
 
 fs.mkdirSync(outDir, { recursive: true });
 fs.writeFileSync(
